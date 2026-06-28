@@ -1,0 +1,19 @@
+# Scratch downloads (never committed)
+/temp/
+
+# Secrets / local config
+.env
+*.pem
+deploy_key
+deploy_key.pub
+id_*
+known_hosts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
