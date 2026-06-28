@@ -16,6 +16,40 @@ python data/<name>.py -o out/    # write into a different directory
 The scripts depend only on the Python standard library (Python 3.8+ to *run* an
 already-generated extractor).
 
+## Two output formats
+
+Each file can be encoded as either:
+
+- **Self-extracting `.py`** (default) — one standalone, runnable script (above).
+- **Data file `<name>.txt`** (`--format data`) — a plain-text file with a human-readable
+  JSON header, a `---` separator, then the base64 body. It is *not* Python, so it is never
+  compiled — reconstruct it with the standalone, stdlib-only [`extract.py`](./extract.py):
+
+  ```bash
+  python extract.py data/<name>.txt            # writes the original file here
+  python extract.py data/<name>.txt -o out/    # into another directory
+  python extract.py data/<name>.txt --force    # overwrite an existing target
+  python extract.py data/<name>.txt --stdout   # raw bytes to stdout
+  ```
+
+  The data file looks like:
+
+  ```
+  {
+      "compression": "gzip",
+      "encoding": "base64",
+      "filename": "tool.zip",
+      "sha256": "9f86d0…",
+      "size": 524288000,
+      "zencoded": 1
+  }
+  ---
+  <base64 …>
+  ```
+
+  Prefer this for **large files**: extraction streams the body with flat memory and no
+  per-run compile cost (a multi-hundred-MB `.py` is slow and memory-hungry to compile).
+
 ## Components
 
 - **Core encoder** (`src/zencoded/encoder.py`, `template.py`) — turns any file into a
@@ -33,8 +67,10 @@ This is a [uv](https://docs.astral.sh/uv/)-managed project (Python ≥ 3.13).
 ```bash
 uv sync                                   # install deps
 uv run pytest                             # run tests
-uv run zencoded encode ./somefile.bin     # encode a local file -> data/somefile.bin.py
-uv run zencoded encode-url https://…      # download + encode a URL
+uv run zencoded encode ./somefile.bin                 # -> data/somefile.bin.py
+uv run zencoded encode ./somefile.bin --format data   # -> data/somefile.bin.txt
+uv run zencoded encode-url https://…                  # download + encode a URL
+uv run zencoded extract ./data/somefile.bin.txt -o .  # reconstruct a data file
 uv run uvicorn zencoded.web.app:app --reload   # run the web service (needs .env)
 ```
 

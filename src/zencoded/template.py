@@ -10,7 +10,8 @@ template body may freely contain ``{`` / ``}`` and ``%`` characters.
 
 # Tokens substituted by the encoder.
 TOKEN_FILENAME = "{{FILENAME}}"
-TOKEN_COMPRESSED = "{{COMPRESSED}}"
+TOKEN_ENCODING = "{{ENCODING}}"
+TOKEN_COMPRESSION = "{{COMPRESSION}}"
 TOKEN_SHA256 = "{{SHA256}}"
 TOKEN_SIZE = "{{SIZE}}"
 TOKEN_SOURCE = "{{SOURCE}}"
@@ -35,7 +36,8 @@ import zlib
 from pathlib import Path
 
 FILENAME = "{{FILENAME}}"
-COMPRESSED = {{COMPRESSED}}
+ENCODING = "{{ENCODING}}"      # how the payload below is encoded (currently "base64")
+COMPRESSION = "{{COMPRESSION}}"  # "gzip" or "none"
 SHA256 = "{{SHA256}}"
 SIZE = {{SIZE}}
 SOURCE = {{SOURCE}}
@@ -72,7 +74,11 @@ def _original_chunks():
     markers and the newlines, and each block is whole lines, so it decodes
     independently.
     """
-    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS) if COMPRESSED else None
+    if ENCODING != "base64":
+        raise SystemExit("unsupported encoding: " + ENCODING)
+    decompressor = (
+        zlib.decompressobj(16 + zlib.MAX_WBITS) if COMPRESSION == "gzip" else None
+    )
     for block in _read_blocks():
         raw = binascii.a2b_base64(block)  # '#' markers and newlines are ignored
         if decompressor is None:

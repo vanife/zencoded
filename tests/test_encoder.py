@@ -118,3 +118,37 @@ def test_invalid_filename_rejected():
 
 def test_script_filename():
     assert encoder.script_filename("foo.zip") == "foo.zip.py"
+
+
+def test_datafile_filename():
+    assert encoder.datafile_filename("foo.zip") == "foo.zip.txt"
+
+
+def test_self_extractor_declares_encoding_and_compression():
+    plain = encoder.encode_bytes(b"x" * 100, "x.bin", compress="never")
+    assert 'ENCODING = "base64"' in plain.script
+    assert 'COMPRESSION = "none"' in plain.script
+    zipped = encoder.encode_bytes(b"a" * 5000, "a.bin", compress="always")
+    assert 'COMPRESSION = "gzip"' in zipped.script
+
+
+def test_datafile_header_valid_json_and_body_plain():
+    res = encoder.encode_bytes_to_datafile(b"a" * 5000, "a.bin", compress="always")
+    header_text, sep, body = res.content.partition("\n---\n")
+    assert sep
+    header = __import__("json").loads(header_text)
+    assert header == {
+        "zencoded": 1,
+        "encoding": "base64",
+        "compression": "gzip",
+        "filename": "a.bin",
+        "size": 5000,
+        "sha256": res.sha256,
+    }
+    assert body.strip() and "#" not in body  # plain base64, no comment prefixes
+
+
+def test_datafile_omits_source_when_absent():
+    res = encoder.encode_bytes_to_datafile(b"x", "x.bin")
+    header = __import__("json").loads(res.content.split("\n---\n")[0])
+    assert "source" not in header

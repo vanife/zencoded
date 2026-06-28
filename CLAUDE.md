@@ -33,6 +33,18 @@ triggered either by the CLI or the web API. Key modules in `src/zencoded/`:
   streamed back from `__file__` in ~16 MiB blocks at extract time — never embedded as a
   Python string literal (which costs several× its size in RAM to compile). This keeps
   extraction peak memory ~constant regardless of file size; keep it that way.
+- **Two output formats.** `encode_file`/`render_script` produce the `.py` self-extractor;
+  `encode_file_to_datafile`/`render_datafile` produce a `<name>.txt` **data file** — a
+  pretty JSON header (`json.dumps(indent=4, sort_keys=True)`), a `---` line, then plain
+  wrapped base64. The header declares `encoding`/`compression` (extensible). `_wrap_b64`
+  is shared; the `.py` path prefixes each line with `#`. Data files aren't Python, so they
+  skip the compile cost entirely — preferred for large files. `_choose_payload` and the
+  gzip `mtime=0` rule are shared by both.
+- `decoder.py` + `extract.py` — read data files. `extract.py` (repo root) is the
+  standalone, **stdlib-only** reader shipped alongside data files; `src/zencoded/decoder.py`
+  is the importable twin used by `zencoded extract`. They mirror each other (extract.py
+  can't import the package) and stream-decode with the same bounded-memory logic as
+  `template._original_chunks`; keep the three in sync.
 - `downloader.py` — SSRF-safe fetch. `validate_url` resolves the host and rejects any
   non-public IP; redirects are followed manually and **re-validated per hop**. Streams to
   `temp/<job>/` with a size cap. Edit this module carefully — its guarantees are the
