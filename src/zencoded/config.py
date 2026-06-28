@@ -8,11 +8,18 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .encoder import CompressMode
+
+# How a generated script is published:
+#   "git"     -> commit + push the file into data/ (default; fails on >100 MiB files)
+#   "release" -> upload the file as a GitHub Release asset (no size limit, needs a token)
+#   "auto"    -> release when the script exceeds release_size_threshold, else git
+PublishMode = Literal["git", "release", "auto"]
 
 # Repo root = two levels up from this file (src/zencoded/config.py -> repo/).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -48,8 +55,23 @@ class Settings(BaseSettings):
     git_author_email: str = "zencoded-bot@users.noreply.github.com"
     deploy_key_path: Path | None = None
     known_hosts_path: Path | None = None
-    # If False, files are written to data/ but not committed/pushed (useful in dev).
+    # If False, files are written to data/ but not committed/pushed/uploaded (dev).
     publish_enabled: bool = True
+
+    # --- GitHub Releases publishing (for large files) ---
+    publish_mode: PublishMode = "git"
+    # Token with this repo's Contents:write permission (fine-grained PAT or App token).
+    # Required for "release"/"auto" modes — the SSH deploy key cannot call the REST API.
+    github_token: str = ""
+    # owner/repo the releases belong to (e.g. "octocat" / "zencoded").
+    github_owner: str = ""
+    github_repo: str = ""
+    # Single rolling release tag that encoded assets are attached to.
+    release_tag: str = "encoded"
+    github_api_url: str = "https://api.github.com"
+    # In "auto" mode, scripts larger than this go to a Release instead of git.
+    # 90 MiB leaves headroom under GitHub's hard 100 MiB per-file push limit.
+    release_size_threshold: int = 90 * 1024 * 1024
 
     # --- Download / encoding ---
     data_dir: Path = _REPO_ROOT / "data"
@@ -78,6 +100,12 @@ class Settings(BaseSettings):
 
     def is_allowed(self, github_login: str) -> bool:
         return github_login.lower() in self.oauth_allowlist
+
+    def resolve_publish_mode(self, script_size: int) -> str:
+        """Resolve "auto" to "git"/"release" based on the generated script's size."""
+        if self.publish_mode != "auto":
+            return self.publish_mode
+        return "release" if script_size > self.release_size_threshold else "git"
 
 
 @lru_cache

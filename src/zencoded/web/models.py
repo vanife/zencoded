@@ -40,6 +40,8 @@ class JobView(BaseModel):
     original_size: Optional[int] = None
     compressed: Optional[bool] = None
     pushed: Optional[bool] = None
+    published_via: Optional[str] = None
+    download_url: Optional[str] = None
 
 
 class UserView(BaseModel):

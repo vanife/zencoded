@@ -36,6 +36,10 @@ triggered either by the CLI or the web API. Key modules in `src/zencoded/`:
 - `publisher.py` — git publishing via subprocess. Writes only under `data/`
   (`_resolve_within` blocks traversal), then `add → commit → pull --rebase → push` using a
   deploy key passed through `GIT_SSH_COMMAND`. Honors `publish_enabled=False` for dev.
+- `releaser.py` — alternative publish path for files over GitHub's 100 MiB push limit:
+  uploads the script as a GitHub Release asset via the REST API (httpx). Needs a
+  `github_token` (Contents:write) — the deploy key can't call the REST API. `jobs.run_job`
+  picks git vs release via `settings.resolve_publish_mode(script_size)` (`git`/`release`/`auto`).
 - `jobs.py` — in-memory `JobRegistry` (thread-safe) + `run_job` (async; runs blocking git
   in a thread, cleans up `temp/`).
 - `config.py` — `Settings` (pydantic-settings, env prefix `ZENCODED_`). Use the cached

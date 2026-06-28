@@ -15,11 +15,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from . import encoder
+from . import encoder, publisher
 from .config import Settings
 from .downloader import DownloadError, download
 from .encoder import CompressMode
 from .publisher import PublishError, publish
+from .releaser import ReleaseError, upload_asset
 
 
 class JobStatus(str, Enum):
@@ -48,6 +49,8 @@ class Job:
     original_size: Optional[int] = None
     compressed: Optional[bool] = None
     pushed: Optional[bool] = None
+    published_via: Optional[str] = None  # "git" or "release"
+    download_url: Optional[str] = None  # release asset URL, when published via release
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -105,33 +108,50 @@ async def run_job(settings: Settings, job_id: str) -> None:
             max_redirects=settings.max_redirects,
         )
 
-        encoded = encoder.encode_file(
-            result.path, compress=job.compress, source=result.final_url
+        # Encoding can be CPU/memory heavy for large files -> run off the event loop
+        # so a big job does not block other requests.
+        encoded = await asyncio.to_thread(
+            encoder.encode_file, result.path, compress=job.compress, source=result.final_url
         )
         script_name = encoder.script_filename(encoded.filename)
 
-        # Publishing shells out to git (blocking) -> run off the event loop.
-        published = await asyncio.to_thread(
-            publish,
-            settings,
-            filename=script_name,
-            script=encoded.script,
-            source_url=result.final_url,
-            actor=job.actor,
-            job_id=job_id,
+        # Route by size: large scripts can't be git-pushed (>100 MiB), so upload them
+        # as a Release asset instead. Threshold/mode come from settings.
+        script_size = len(encoded.script.encode("utf-8"))
+        mode = settings.resolve_publish_mode(script_size)
+
+        # The file is always written to data/ first; both paths need it on disk.
+        target = await asyncio.to_thread(
+            publisher.write_script, settings, script_name, encoded.script
         )
 
-        registry.update(
-            job_id,
-            status=JobStatus.SUCCESS,
-            filename=encoded.filename,
-            script_path=str(published.path),
-            sha256=encoded.sha256,
-            original_size=encoded.original_size,
-            compressed=encoded.compressed,
-            pushed=published.pushed,
-        )
-    except (DownloadError, PublishError, ValueError, OSError) as exc:
+        result_fields: dict = {
+            "filename": encoded.filename,
+            "script_path": str(target),
+            "sha256": encoded.sha256,
+            "original_size": encoded.original_size,
+            "compressed": encoded.compressed,
+            "published_via": mode,
+        }
+
+        if mode == "release":
+            released = await asyncio.to_thread(upload_asset, settings, path=target)
+            result_fields["download_url"] = released.download_url
+            result_fields["pushed"] = released.uploaded
+        else:  # git
+            published = await asyncio.to_thread(
+                publish,
+                settings,
+                filename=script_name,
+                script=encoded.script,
+                source_url=result.final_url,
+                actor=job.actor,
+                job_id=job_id,
+            )
+            result_fields["pushed"] = published.pushed
+
+        registry.update(job_id, status=JobStatus.SUCCESS, **result_fields)
+    except (DownloadError, PublishError, ReleaseError, ValueError, OSError) as exc:
         registry.update(job_id, status=JobStatus.FAILED, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - record unexpected failures too
         registry.update(job_id, status=JobStatus.FAILED, error=f"unexpected error: {exc}")

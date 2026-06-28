@@ -56,6 +56,22 @@ are defended: **who can trigger jobs**, **what the server is allowed to fetch**,
   acting operator, and the job id. The flow is `add → commit → pull --rebase → push`;
   pushes are never forced. Consider GitHub branch protection on the target branch.
 
+### Large files: GitHub Release assets — `releaser.py`
+
+Files over GitHub's hard 100 MiB per-file push limit can't be committed, so in
+`release`/`auto` publish mode the encoded script is uploaded as a Release asset instead.
+
+- **Separate credential, still least-privilege.** The Releases REST API cannot be called
+  with the SSH deploy key, so it uses `ZENCODED_GITHUB_TOKEN` — a **fine-grained PAT (or
+  GitHub App token) scoped to this single repo** with only `Contents: write`. Keep it in
+  a secret store; it is never committed (see `.gitignore`). This is a distinct, narrower
+  credential from any account-wide token.
+- **Idempotent overwrite.** Uploading reuses a single rolling release tag; an existing
+  same-named asset is deleted before re-upload (assets are immutable), matching the repo's
+  overwrite semantics.
+- **Portability preserved.** The asset's `browser_download_url` serves the raw bytes, so
+  the self-extractor remains fetchable as plain text (`curl -O <url>`).
+
 ## Operational notes
 
 - All secrets come from the environment / a secret manager — never commit `.env` or key
