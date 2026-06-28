@@ -29,6 +29,10 @@ triggered either by the CLI or the web API. Key modules in `src/zencoded/`:
   substitution (not `str.format`, so the template may contain `{`/`}`). Compression is
   `auto|always|never`; `auto` keeps gzip only when it shrinks the data (already-compressed
   inputs stay raw). The generated script is **stdlib-only** and verifies SHA-256 on extract.
+  The base64 payload is appended as a trailing **comment block** (each line `#…`) and
+  streamed back from `__file__` in ~16 MiB blocks at extract time — never embedded as a
+  Python string literal (which costs several× its size in RAM to compile). This keeps
+  extraction peak memory ~constant regardless of file size; keep it that way.
 - `downloader.py` — SSRF-safe fetch. `validate_url` resolves the host and rejects any
   non-public IP; redirects are followed manually and **re-validated per hop**. Streams to
   `temp/<job>/` with a size cap. Edit this module carefully — its guarantees are the

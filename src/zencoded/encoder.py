@@ -61,12 +61,12 @@ def _b64_block(payload: bytes) -> str:
     encoded = base64.b64encode(payload).decode("ascii")
     if not encoded:
         return ""
-    # Fixed-width slicing rather than textwrap.wrap: the latter is prose-oriented
-    # (regex word-splitting + per-chunk list building) and is pathologically slow and
-    # memory-hungry on a multi-hundred-MB single-token string. base64 has no spaces, so
-    # a plain slice gives identical output far faster.
+    # Each line is prefixed with '#': the payload is appended to the generated script
+    # as a comment block (see template), so Python never compiles it as a string
+    # constant. Fixed-width slicing rather than textwrap.wrap, which is prose-oriented
+    # and pathologically slow/memory-hungry on a multi-hundred-MB single token.
     return "\n".join(
-        encoded[i : i + _WRAP_WIDTH] for i in range(0, len(encoded), _WRAP_WIDTH)
+        "#" + encoded[i : i + _WRAP_WIDTH] for i in range(0, len(encoded), _WRAP_WIDTH)
     )
 
 

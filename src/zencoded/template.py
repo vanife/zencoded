@@ -28,10 +28,10 @@ verifying its SHA-256 checksum. Standard library only; no dependencies.
     python <thisfile> --stdout        # write raw bytes to stdout
 """
 import argparse
-import base64
-import gzip
+import binascii
 import hashlib
 import sys
+import zlib
 from pathlib import Path
 
 FILENAME = "{{FILENAME}}"
@@ -39,24 +39,61 @@ COMPRESSED = {{COMPRESSED}}
 SHA256 = "{{SHA256}}"
 SIZE = {{SIZE}}
 SOURCE = {{SOURCE}}
-PAYLOAD = """
-{{PAYLOAD}}
-"""
+
+# The base64 payload is NOT stored as a Python string literal: compiling a multi-
+# hundred-MB literal costs several times its size in RAM and is slow. Instead it is
+# appended at the end of this file as a block of comment lines and streamed back from
+# the file at run time, so Python never builds it as a constant. Peak memory stays at
+# roughly one block regardless of file size.
+_MARKER = "# ZENCODED-PAYLOAD-DO-NOT-EDIT-BELOW"
+_BLOCK_CHARS = 1 << 24  # read/decode ~16 MiB at a time
 
 
-def extract_bytes():
-    """Return the original file's bytes, verifying the embedded checksum."""
-    # b64decode ignores the embedded newlines (non-alphabet chars) by default.
-    raw = base64.b64decode(PAYLOAD)
-    data = gzip.decompress(raw) if COMPRESSED else raw
-    digest = hashlib.sha256(data).hexdigest()
-    if digest != SHA256:
-        raise SystemExit(
-            "checksum mismatch: expected {expected}, got {actual}".format(
-                expected=SHA256, actual=digest
-            )
-        )
-    return data
+def _read_blocks():
+    """Yield ~16 MiB blocks of the comment-encoded payload appended to this file."""
+    with open(__file__, "r", encoding="ascii") as fh:
+        for line in fh:
+            if line.rstrip(chr(10)) == _MARKER:
+                break
+        while True:
+            block = fh.read(_BLOCK_CHARS)
+            if not block:
+                return
+            if not block.endswith(chr(10)):
+                block += fh.readline()  # finish the trailing partial line
+            yield block
+
+
+def _original_chunks():
+    """Yield the original file's bytes in chunks, decoding (and gunzipping) lazily.
+
+    Streaming avoids holding the whole decoded file (and, when compressed, a second
+    decompressed copy) in memory at once. a2b_base64 ignores the leading '#' comment
+    markers and the newlines, and each block is whole lines, so it decodes
+    independently.
+    """
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS) if COMPRESSED else None
+    for block in _read_blocks():
+        raw = binascii.a2b_base64(block)  # '#' markers and newlines are ignored
+        if decompressor is None:
+            if raw:
+                yield raw
+            continue
+        # Bound decompressed output per call so a tiny but highly compressible block
+        # can't expand to gigabytes at once. Keep draining until no output remains:
+        # the input may be fully consumed while output is still internally buffered,
+        # so we cannot stop merely because unconsumed_tail is empty.
+        while True:
+            out = decompressor.decompress(raw, _BLOCK_CHARS)
+            raw = decompressor.unconsumed_tail
+            if out:
+                yield out
+            if not out and not raw:
+                break
+    if decompressor is not None:
+        tail = decompressor.flush()
+        if tail:
+            yield tail
 
 
 def main(argv=None):
@@ -82,10 +119,16 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    data = extract_bytes()
+    digest = hashlib.sha256()
 
     if args.stdout:
-        sys.stdout.buffer.write(data)
+        out = sys.stdout.buffer
+        for chunk in _original_chunks():
+            digest.update(chunk)
+            out.write(chunk)
+        out.flush()
+        if digest.hexdigest() != SHA256:
+            raise SystemExit("checksum mismatch: extracted data is corrupt")
         return 0
 
     target = Path(args.output_dir) / FILENAME
@@ -96,11 +139,25 @@ def main(argv=None):
             )
         )
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    print("wrote {target} ({size} bytes)".format(target=target, size=len(data)))
+    written = 0
+    with target.open("wb") as fh:
+        for chunk in _original_chunks():
+            digest.update(chunk)
+            fh.write(chunk)
+            written += len(chunk)
+    if digest.hexdigest() != SHA256:
+        target.unlink()  # don't leave a corrupt file behind
+        raise SystemExit(
+            "checksum mismatch: expected {expected}, got {actual}".format(
+                expected=SHA256, actual=digest.hexdigest()
+            )
+        )
+    print("wrote {target} ({size} bytes)".format(target=target, size=written))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# ZENCODED-PAYLOAD-DO-NOT-EDIT-BELOW
+{{PAYLOAD}}
 '''

@@ -40,6 +40,28 @@ def test_round_trip(tmp_path, mode, name):
         assert result.compressed is True
 
 
+def test_payload_is_trailing_comment_block_not_literal():
+    # The payload must NOT be embedded as a compiled string literal (that costs
+    # several times its size in RAM to compile). It lives as a trailing comment block
+    # streamed from __file__. Guard against regressing to the literal format.
+    result = encoder.encode_bytes(b"x" * 5000, "x.bin", compress="never")
+    assert 'PAYLOAD = """' not in result.script
+    assert "ZENCODED-PAYLOAD-DO-NOT-EDIT-BELOW" in result.script
+    payload_lines = [
+        ln for ln in result.script.splitlines()
+        if ln and ln[0] == "#" and "ZENCODED" not in ln and "!/usr" not in ln
+    ]
+    assert payload_lines, "expected #-prefixed payload comment lines"
+
+
+def test_round_trip_highly_compressible_compressed(tmp_path):
+    # Exercises the bounded streaming-decompress path (small input expands a lot).
+    data = b"zencoded " * 200_000  # ~1.8 MB, very compressible
+    result = encoder.encode_bytes(data, "blob.bin", compress="always")
+    assert result.compressed is True
+    assert _extract(result.script, tmp_path, "blob.bin") == data
+
+
 def test_auto_does_not_enlarge_compressed_input():
     data = SAMPLES["already.gz"]
     result = encoder.encode_bytes(data, "already.gz", compress="auto")
