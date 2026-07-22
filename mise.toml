@@ -1,0 +1,28 @@
+[tasks.upload]
+description = "Upload assets to a GitHub release, skipping ones already uploaded (tag defaults to 'encoded')"
+usage = '''
+arg "<files>…" var=#true help="Paths to the assets; globs work, e.g. ./data/*"
+flag "-t --tag <tag>" default="encoded" help="Release tag to upload to"
+flag "-f --force" help="Re-upload assets that already exist on the release"
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+existing=$(gh release view "$usage_tag" --json assets -q '.assets[].name')
+eval "files=($usage_files)"  # mise shell-quotes each value, so eval is safe and space-proof
+to_upload=()
+count=0
+for f in "${files[@]}"; do
+    if [[ "${usage_force:-false}" != "true" ]] && grep -qxF "$(basename "$f")" <<<"$existing"; then
+        echo "skip: $f (already uploaded)"
+        continue
+    fi
+    to_upload+=("$f")
+    count=$((count + 1))
+done
+if (( count )); then
+    gh release upload "$usage_tag" "${to_upload[@]}" --clobber
+else
+    echo "nothing to upload"
+fi
+'''
